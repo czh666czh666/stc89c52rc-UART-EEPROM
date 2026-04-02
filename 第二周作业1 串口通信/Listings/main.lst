@@ -1,0 +1,156 @@
+C51 COMPILER V9.60.7.0   MAIN                                                              04/02/2026 16:04:18 PAGE 1   
+
+
+C51 COMPILER V9.60.7.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\Keil5\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main.l
+                    -st) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          #include <STC89C5xRC.H>
+   2          #include "I2C.h"
+   3          #include "AT24C02.h"
+   4          #include "UART.h"
+   5          #include "Timer0.h"
+   6          
+   7          #define SAVE_DATA_MAX     60      //最多能够存60个字节
+   8          #define SAVE_TIME         1000    //1000ms无新数据，自动保存
+   9          
+  10          unsigned char Receive_Data;                      //最近一次收到的串口字节
+  11          bit ReceiveFlag;                                 //接收完成标志位 1 接收到字节 0 处理完成
+  12          
+  13          unsigned char ReceiveBuffer[SAVE_DATA_MAX];      //字符串缓冲区
+  14          unsigned char ReceiveCount = 0;                  //已经收到多少个字符
+  15          
+  16          unsigned int ReceiveTime = 0;                    //距离上次接收已经过去多少ms
+  17          bit SaveFlag = 0;                                //超时保存标志位
+  18          
+  19          void SaveToEEPROM(void);                         //把数据保存到EEPROM中
+  20          void ShowFromEEPROM(void);                       //显示EEPROM中的数据
+  21          
+  22          void main()
+  23          {
+  24   1          UART_Init();      //串口初始化
+  25   1          Timer0Init();     //定时器0初始化
+  26   1      
+  27   1          UART_SendString("\r\nSystem Start\r\n");
+  28   1          ShowFromEEPROM();
+  29   1          UART_SendString("Send data and wait to save\r\n");
+  30   1      
+  31   1          while(1)
+  32   1          {
+  33   2              if(ReceiveFlag==1)
+  34   2              {
+  35   3                  ReceiveFlag=0;
+  36   3      
+  37   3                  //如果接收到的是普通字符，先存进缓冲区
+  38   3                  if(ReceiveCount<SAVE_DATA_MAX)  //判断是否溢出
+  39   3                  {
+  40   4                      ReceiveBuffer[ReceiveCount]=Receive_Data;
+  41   4                      ReceiveCount++;
+  42   4                  }
+  43   3      
+  44   3                  //每收到一个新字节，就把空闲时间和保存标志位清零
+  45   3                  ReceiveTime=0;
+  46   3                  SaveFlag=0;
+  47   3              }
+  48   2      
+  49   2              //判断如果超时就自动保存
+  50   2              if(SaveFlag==1)
+  51   2              {
+  52   3                  SaveFlag=0;
+  53   3      
+  54   3                  if(ReceiveCount>0)       //如果不是空数据
+C51 COMPILER V9.60.7.0   MAIN                                                              04/02/2026 16:04:18 PAGE 2   
+
+  55   3                  {
+  56   4                      SaveToEEPROM();      //调用保存函数，把数据保存到EEPROM中
+  57   4                      ReceiveCount=0;
+  58   4      
+  59   4                      UART_SendString("\r\nSAVE OK\r\n");
+  60   4                      ShowFromEEPROM();
+  61   4                      UART_SendString("Send data and wait to save\r\n");
+  62   4                  }
+  63   3              }
+  64   2          }
+  65   1      }
+  66          
+  67          void SaveToEEPROM(void)  //把缓冲区内容写入EEPROM，地址0：长度，地址1~n：字符串内容
+  68          {
+  69   1          unsigned char i;
+  70   1      
+  71   1          AT24C02_WriteByte(0x00,ReceiveCount);   // 先存长度
+  72   1      
+  73   1          for(i=0;i<ReceiveCount;i++)
+  74   1          {
+  75   2              AT24C02_WriteByte(i+1,ReceiveBuffer[i]);
+  76   2          }
+  77   1      
+  78   1      }
+  79          
+  80          void ShowFromEEPROM(void)  //上电后从EEPROM读出并显示
+  81          {
+  82   1          unsigned char i;
+  83   1          unsigned char len;
+  84   1      
+  85   1          len = AT24C02_ReadByte(0x00);  //获得长度
+  86   1      
+  87   1          UART_SendString("EEPROM:");
+  88   1      
+  89   1          if(len==0xFF || len==0 || len>SAVE_DATA_MAX)
+  90   1          {
+  91   2              UART_SendString("NO DATA\r\n");
+  92   2              return;
+  93   2          }
+  94   1      
+  95   1          for(i=0;i<len;i++)      //依次读取字符
+  96   1          {
+  97   2              UART_SendByte(AT24C02_ReadByte(i+1));
+  98   2          }
+  99   1      
+ 100   1          UART_SendString("\r\n");
+ 101   1      }
+ 102          
+ 103          void Timer0_Routine() interrupt 1  //定时器0中断，1ms进入一次
+ 104          {
+ 105   1          TL0=0x66;
+ 106   1          TH0=0xFC;
+ 107   1      
+ 108   1          if(ReceiveCount>0 && SaveFlag==0)
+ 109   1          {
+ 110   2              ReceiveTime++;
+ 111   2      
+ 112   2              if(ReceiveTime>=SAVE_TIME)
+ 113   2              {
+ 114   3                  ReceiveTime=0;
+ 115   3                  SaveFlag=1;
+ 116   3              }
+C51 COMPILER V9.60.7.0   MAIN                                                              04/02/2026 16:04:18 PAGE 3   
+
+ 117   2          }
+ 118   1      }
+ 119          
+ 120          void UART_Routine() interrupt 4  //串口中断
+ 121          {
+ 122   1          if(RI==1)
+ 123   1          {
+ 124   2              Receive_Data=SBUF;  //把SBUF中的数据存入Receive_Data
+ 125   2              RI=0;
+ 126   2              ReceiveFlag=1;      //1 接收到字节，主循环开始处理
+ 127   2          }
+ 128   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    269    ----
+   CONSTANT SIZE    =     79    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     64       3
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      2    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
